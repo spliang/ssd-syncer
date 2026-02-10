@@ -16,6 +16,8 @@ pub struct FileEntry {
     pub size: u64,
     pub mtime_secs: i64,
     pub hash: String,
+    #[serde(default)]
+    pub is_dir: bool,
 }
 
 impl Snapshot {

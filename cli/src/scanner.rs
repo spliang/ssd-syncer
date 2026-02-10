@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::BTreeSet;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -22,16 +23,13 @@ pub fn scan_directory(
         anyhow::bail!("Path is not a directory: {}", root.display());
     }
 
+    // Collect all directories for empty-dir detection
+    let mut all_dirs: BTreeSet<String> = BTreeSet::new();
+    // Track which directories contain files (directly or indirectly)
+    let mut non_empty_dirs: BTreeSet<String> = BTreeSet::new();
+
     for entry in WalkDir::new(root).follow_links(false) {
         let entry = entry.with_context(|| format!("Failed to walk directory: {}", root.display()))?;
-
-        if entry.file_type().is_dir() {
-            continue;
-        }
-
-        if !entry.file_type().is_file() {
-            continue;
-        }
 
         let abs_path = entry.path();
         let rel_path = abs_path
@@ -45,8 +43,36 @@ pub fn scan_directory(
             .collect::<Vec<_>>()
             .join("/");
 
+        if rel_str.is_empty() {
+            continue; // Skip root itself
+        }
+
         if ignore.is_ignored(&rel_str) {
             continue;
+        }
+
+        if entry.file_type().is_dir() {
+            all_dirs.insert(rel_str);
+            continue;
+        }
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        // Mark all ancestor directories as non-empty
+        let mut ancestor = rel_path.parent();
+        while let Some(p) = ancestor {
+            if p == Path::new("") {
+                break;
+            }
+            let ancestor_str = p
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join("/");
+            non_empty_dirs.insert(ancestor_str);
+            ancestor = p.parent();
         }
 
         let metadata = std::fs::metadata(abs_path)
@@ -88,8 +114,24 @@ pub fn scan_directory(
                 size,
                 mtime_secs,
                 hash,
+                is_dir: false,
             },
         );
+    }
+
+    // Add empty directories to the snapshot
+    for dir in &all_dirs {
+        if !non_empty_dirs.contains(dir) {
+            snapshot.files.insert(
+                dir.clone(),
+                FileEntry {
+                    size: 0,
+                    mtime_secs: 0,
+                    hash: "empty-dir".to_string(),
+                    is_dir: true,
+                },
+            );
+        }
     }
 
     Ok(snapshot)

@@ -63,7 +63,13 @@ impl SyncEngine {
         for entry in &plan.actions {
             match &entry.action {
                 SyncAction::CopyToSsd => {
-                    if let Err(e) = self.copy_file(
+                    if entry.is_dir {
+                        if let Err(e) = self.create_dir(&ssd_root.join(&entry.path)) {
+                            result.errors.push(format!("CreateDirSsd {}: {}", entry.path, e));
+                        } else {
+                            result.copied_to_ssd += 1;
+                        }
+                    } else if let Err(e) = self.copy_file(
                         &local_root.join(&entry.path),
                         &ssd_root.join(&entry.path),
                     ) {
@@ -75,7 +81,13 @@ impl SyncEngine {
                     }
                 }
                 SyncAction::CopyToLocal => {
-                    if let Err(e) = self.copy_file(
+                    if entry.is_dir {
+                        if let Err(e) = self.create_dir(&local_root.join(&entry.path)) {
+                            result.errors.push(format!("CreateDirLocal {}: {}", entry.path, e));
+                        } else {
+                            result.copied_to_local += 1;
+                        }
+                    } else if let Err(e) = self.copy_file(
                         &ssd_root.join(&entry.path),
                         &local_root.join(&entry.path),
                     ) {
@@ -87,7 +99,13 @@ impl SyncEngine {
                     }
                 }
                 SyncAction::DeleteFromSsd => {
-                    if let Err(e) = self.delete_file(&ssd_root.join(&entry.path)) {
+                    if entry.is_dir {
+                        if let Err(e) = self.delete_dir(&ssd_root.join(&entry.path)) {
+                            result.errors.push(format!("DeleteDirSsd {}: {}", entry.path, e));
+                        } else {
+                            result.deleted_from_ssd += 1;
+                        }
+                    } else if let Err(e) = self.delete_file(&ssd_root.join(&entry.path)) {
                         result
                             .errors
                             .push(format!("DeleteFromSsd {}: {}", entry.path, e));
@@ -96,7 +114,13 @@ impl SyncEngine {
                     }
                 }
                 SyncAction::DeleteFromLocal => {
-                    if let Err(e) = self.delete_file(&local_root.join(&entry.path)) {
+                    if entry.is_dir {
+                        if let Err(e) = self.delete_dir(&local_root.join(&entry.path)) {
+                            result.errors.push(format!("DeleteDirLocal {}: {}", entry.path, e));
+                        } else {
+                            result.deleted_from_local += 1;
+                        }
+                    } else if let Err(e) = self.delete_file(&local_root.join(&entry.path)) {
                         result
                             .errors
                             .push(format!("DeleteFromLocal {}: {}", entry.path, e));
@@ -119,6 +143,34 @@ impl SyncEngine {
         }
 
         Ok(result)
+    }
+
+    fn create_dir(&self, path: &Path) -> Result<()> {
+        if self.dry_run {
+            log::info!("[DRY RUN] Create dir {}", path.display());
+            return Ok(());
+        }
+
+        std::fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create dir: {}", path.display()))?;
+        log::info!("Created dir {}", path.display());
+        Ok(())
+    }
+
+    fn delete_dir(&self, path: &Path) -> Result<()> {
+        if self.dry_run {
+            log::info!("[DRY RUN] Delete dir {}", path.display());
+            return Ok(());
+        }
+
+        if path.exists() && path.is_dir() {
+            std::fs::remove_dir(path)
+                .with_context(|| format!("Failed to delete dir: {}", path.display()))?;
+            log::info!("Deleted dir {}", path.display());
+            self.cleanup_empty_parents(path)?;
+        }
+
+        Ok(())
     }
 
     fn copy_file(&self, src: &Path, dst: &Path) -> Result<()> {

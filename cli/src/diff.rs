@@ -14,6 +14,7 @@ pub struct FileChange {
     pub path: String,
     pub change_type: ChangeType,
     pub entry: Option<FileEntry>, // Current entry (None if deleted)
+    pub is_dir: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +41,7 @@ pub struct SyncPlan {
 pub struct SyncPlanEntry {
     pub path: String,
     pub action: SyncAction,
+    pub is_dir: bool,
 }
 
 impl SyncPlan {
@@ -84,13 +86,15 @@ pub fn compute_changes(
                     path: path.clone(),
                     change_type: ChangeType::Added,
                     entry: Some(entry.clone()),
+                    is_dir: entry.is_dir,
                 });
             }
-            (Some(_), None) => {
+            (Some(base_entry), None) => {
                 changes.push(FileChange {
                     path: path.clone(),
                     change_type: ChangeType::Deleted,
                     entry: None,
+                    is_dir: base_entry.is_dir,
                 });
             }
             (Some(base_entry), Some(cur_entry)) => {
@@ -99,6 +103,7 @@ pub fn compute_changes(
                         path: path.clone(),
                         change_type: ChangeType::Modified,
                         entry: Some(cur_entry.clone()),
+                        is_dir: cur_entry.is_dir,
                     });
                 }
             }
@@ -175,9 +180,16 @@ pub fn build_sync_plan(
             (None, None) => unreachable!(),
         };
 
+        // Determine is_dir from whichever change is available
+        let is_dir = local_change
+            .map(|c| c.is_dir)
+            .or_else(|| ssd_change.map(|c| c.is_dir))
+            .unwrap_or(false);
+
         actions.push(SyncPlanEntry {
             path: path.to_string(),
             action,
+            is_dir,
         });
     }
 
@@ -194,6 +206,7 @@ mod tests {
             size: 100,
             mtime_secs: 1000,
             hash: hash.to_string(),
+            is_dir: false,
         }
     }
 
@@ -243,6 +256,7 @@ mod tests {
             path: "new.txt".to_string(),
             change_type: ChangeType::Added,
             entry: Some(make_entry("hash1")),
+            is_dir: false,
         }];
         let plan = build_sync_plan(&local_changes, &[]);
         assert_eq!(plan.actions.len(), 1);
@@ -255,11 +269,13 @@ mod tests {
             path: "file.txt".to_string(),
             change_type: ChangeType::Modified,
             entry: Some(make_entry("hash_local")),
+            is_dir: false,
         }];
         let ssd_changes = vec![FileChange {
             path: "file.txt".to_string(),
             change_type: ChangeType::Modified,
             entry: Some(make_entry("hash_ssd")),
+            is_dir: false,
         }];
         let plan = build_sync_plan(&local_changes, &ssd_changes);
         assert_eq!(plan.actions.len(), 1);
