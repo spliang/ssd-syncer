@@ -1,0 +1,22 @@
+# Rust build artifacts
+rust-cli/target/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ssd-syncer local config (should not be committed)
+.ssd-syncer/
+
+# Design specs (private)
+spec/
+
+# Windsurf rules
+.windsurfrules
