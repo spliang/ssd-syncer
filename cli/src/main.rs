@@ -36,19 +36,19 @@ enum Commands {
         /// Local folder path
         #[arg(long)]
         local: String,
-        /// SSD target path: absolute path (e.g. "/Volumes/MySSD") or relative folder name (e.g. "WORK_SYNC")
+        /// SSD target absolute path (e.g. "/Volumes/WORK_SYNC/WORK_SYNC")
         #[arg(long)]
         ssd: String,
-        /// Optional alias name for this mapping (e.g. "WORK")
+        /// Alias name for this mapping (e.g. "WORK")
         #[arg(long)]
-        name: Option<String>,
+        name: String,
     },
 
     /// Remove a sync folder mapping
     Remove {
-        /// Relative path on SSD to remove
+        /// Mapping name to remove
         #[arg(long)]
-        ssd: String,
+        name: String,
     },
 
     /// List all configured sync mappings
@@ -56,10 +56,7 @@ enum Commands {
 
     /// Sync all configured folders with SSD
     Sync {
-        /// SSD mount point path OR mapping name (optional if configured via `ssd-syncer set-ssd`)
-        ssd_mount: Option<String>,
-        /// Only sync the mapping with this name
-        #[arg(long)]
+        /// Mapping name (optional if only one mapping exists)
         name: Option<String>,
         /// Dry run (preview only, no changes)
         #[arg(long, default_value_t = false)]
@@ -71,35 +68,23 @@ enum Commands {
 
     /// Show sync status (preview changes without applying)
     Status {
-        /// SSD mount point path OR mapping name (optional if configured via `ssd-syncer set-ssd`)
-        ssd_mount: Option<String>,
-        /// Only show status for the mapping with this name
-        #[arg(long)]
+        /// Mapping name (optional if only one mapping exists)
         name: Option<String>,
     },
 
     /// Show detailed diff between local and SSD
     Diff {
-        /// SSD mount point path OR mapping name (optional if configured via `ssd-syncer set-ssd`)
-        ssd_mount: Option<String>,
-        /// Only show diff for the mapping with this name
-        #[arg(long)]
+        /// Mapping name (optional if only one mapping exists)
         name: Option<String>,
     },
 
     /// Show sync history log
     Log {
-        /// SSD mount point path (optional if configured via `ssd-syncer set-ssd`)
-        ssd_mount: Option<String>,
+        /// Mapping name (optional if only one mapping exists)
+        name: Option<String>,
         /// Number of recent entries to show
         #[arg(long, default_value_t = 20)]
         limit: usize,
-    },
-
-    /// Set default SSD mount point (saved to config)
-    SetSsd {
-        /// SSD mount point path (e.g. /Volumes/MySSD or E:)
-        ssd_mount: String,
     },
 
     /// Reset ignore patterns to defaults (includes common build/temp directories)
@@ -131,14 +116,13 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init { name } => cmd_init(&name),
-        Commands::Add { local, ssd, name } => cmd_add(&local, &ssd, name.as_deref()),
-        Commands::Remove { ssd } => cmd_remove(&ssd),
+        Commands::Add { local, ssd, name } => cmd_add(&local, &ssd, &name),
+        Commands::Remove { name } => cmd_remove(&name),
         Commands::List => cmd_list(),
-        Commands::Sync { ssd_mount, name, dry_run, verbose } => cmd_sync(ssd_mount.as_deref(), name.as_deref(), dry_run, verbose),
-        Commands::Status { ssd_mount, name } => cmd_status(ssd_mount.as_deref(), name.as_deref()),
-        Commands::Diff { ssd_mount, name } => cmd_diff(ssd_mount.as_deref(), name.as_deref()),
-        Commands::Log { ssd_mount, limit } => cmd_log(ssd_mount.as_deref(), limit),
-        Commands::SetSsd { ssd_mount } => cmd_set_ssd(&ssd_mount),
+        Commands::Sync { name, dry_run, verbose } => cmd_sync(name.as_deref(), dry_run, verbose),
+        Commands::Status { name } => cmd_status(name.as_deref()),
+        Commands::Diff { name } => cmd_diff(name.as_deref()),
+        Commands::Log { name, limit } => cmd_log(name.as_deref(), limit),
         Commands::IgnoreReset => cmd_ignore_reset(),
         Commands::IgnoreList => cmd_ignore_list(),
         Commands::IgnoreAdd { patterns } => cmd_ignore_add(&patterns),
@@ -161,19 +145,17 @@ fn cmd_init(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(local: &str, ssd: &str, name: Option<&str>) -> Result<()> {
+fn cmd_add(local: &str, ssd: &str, name: &str) -> Result<()> {
     let mut config = AppConfig::load()?;
 
-    // Check for duplicate
-    if config.find_mapping_by_ssd(ssd).is_some() {
-        anyhow::bail!("Mapping for SSD path '{}' already exists", ssd);
+    // Validate SSD path is absolute
+    if !Path::new(ssd).is_absolute() {
+        anyhow::bail!("SSD path must be an absolute path, got: '{}'", ssd);
     }
 
     // Check name uniqueness
-    if let Some(n) = name {
-        if config.find_mapping_by_name(n).is_some() {
-            anyhow::bail!("Mapping with name '{}' already exists", n);
-        }
+    if config.find_mapping_by_name(name).is_some() {
+        anyhow::bail!("Mapping with name '{}' already exists", name);
     }
 
     // Validate local path exists
@@ -183,32 +165,30 @@ fn cmd_add(local: &str, ssd: &str, name: Option<&str>) -> Result<()> {
     }
 
     config.sync.push(config::SyncMapping {
-        name: name.map(|s| s.to_string()),
+        name: Some(name.to_string()),
         local: local.to_string(),
         ssd: ssd.to_string(),
     });
     config.save()?;
 
     println!("Added sync mapping:");
-    if let Some(n) = name {
-        println!("  Name:  {}", n);
-    }
+    println!("  Name:  {}", name);
     println!("  Local: {}", local);
     println!("  SSD:   {}", ssd);
     Ok(())
 }
 
-fn cmd_remove(ssd: &str) -> Result<()> {
+fn cmd_remove(name: &str) -> Result<()> {
     let mut config = AppConfig::load()?;
     let before = config.sync.len();
-    config.sync.retain(|m| m.ssd != ssd);
+    config.sync.retain(|m| m.name.as_deref() != Some(name));
 
     if config.sync.len() == before {
-        anyhow::bail!("No mapping found for SSD path '{}'", ssd);
+        anyhow::bail!("No mapping found with name '{}'", name);
     }
 
     config.save()?;
-    println!("Removed sync mapping for SSD path '{}'", ssd);
+    println!("Removed sync mapping '{}'", name);
     Ok(())
 }
 
@@ -243,119 +223,40 @@ fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-/// Resolve SSD mount point: use explicit arg, or fall back to config default
-fn resolve_ssd_mount(explicit: Option<&str>, config: &AppConfig) -> Result<String> {
-    if let Some(mount) = explicit {
-        return Ok(mount.to_string());
-    }
-    if let Some(ref mount) = config.machine.ssd_mount {
-        return Ok(mount.clone());
-    }
-    anyhow::bail!(
-        "SSD mount point not specified. Either pass it as an argument or set a default with `ssd-syncer set-ssd <path>`."
-    )
-}
-
-/// Filter mappings by optional name
-fn filter_mappings<'a>(mappings: &'a [config::SyncMapping], name: Option<&str>) -> Vec<&'a config::SyncMapping> {
+/// Resolve mapping(s) by name. If name is given, find that mapping.
+/// If name is None and only one mapping exists, auto-select it.
+/// Returns (ssd_path_string, Vec of matching mappings).
+fn resolve_mappings<'a>(name: Option<&str>, config: &'a AppConfig) -> Result<(String, Vec<&'a config::SyncMapping>)> {
     match name {
-        Some(n) => mappings.iter().filter(|m| m.name.as_deref() == Some(n)).collect(),
-        None => mappings.iter().collect(),
-    }
-}
-
-/// Try to get ssd_mount from a mapping's ssd field if it's an absolute path.
-fn ssd_mount_from_mapping(mapping: &config::SyncMapping) -> Option<String> {
-    let p = Path::new(&mapping.ssd);
-    if p.is_absolute() {
-        Some(mapping.ssd.clone())
-    } else {
-        None
-    }
-}
-
-/// Smart resolve: positional arg can be a path (ssd_mount) or a mapping name.
-/// Returns (resolved_ssd_mount, resolved_name_filter).
-/// - If positional arg is a valid path → treat as ssd_mount
-/// - If positional arg matches a mapping name → use mapping.ssd (if absolute) or default ssd_mount, filter by name
-/// - If no positional arg → use default ssd_mount, no name filter
-/// The `--name` flag always takes precedence for name filtering.
-fn resolve_target(positional: Option<&str>, explicit_name: Option<&str>, config: &AppConfig) -> Result<(String, Option<String>)> {
-    // --name flag always wins for name filtering
-    let name_filter = explicit_name.map(|s| s.to_string());
-
-    match positional {
-        Some(arg) => {
-            // First: check if it's a valid path on disk → treat as ssd_mount
-            let path = Path::new(arg);
-            if path.exists() && path.is_dir() {
-                return Ok((arg.to_string(), name_filter));
-            }
-            // Second: check if it matches a mapping name
-            if let Some(mapping) = config.find_mapping_by_name(arg) {
-                let ssd_mount = ssd_mount_from_mapping(mapping)
-                    .or_else(|| resolve_ssd_mount(None, config).ok())
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "Mapping '{}' has a relative SSD path '{}'. Set a default SSD mount with `ssd-syncer set-ssd <path>` or use an absolute path in `--ssd`.",
-                        arg, mapping.ssd
-                    ))?;
-                let final_name = name_filter.or_else(|| Some(arg.to_string()));
-                return Ok((ssd_mount, final_name));
-            }
-            // Third: treat as ssd_mount path even if not found (will error later with clear message)
-            Ok((arg.to_string(), name_filter))
+        Some(n) => {
+            let mapping = config.find_mapping_by_name(n)
+                .ok_or_else(|| anyhow::anyhow!("No mapping found with name '{}'. Use `ssd-syncer list` to see configured mappings.", n))?;
+            Ok((mapping.ssd.clone(), vec![mapping]))
         }
         None => {
-            // If --name is specified and mapping has absolute ssd path, use it
-            if let Some(ref n) = name_filter {
-                if let Some(mapping) = config.find_mapping_by_name(n) {
-                    if let Some(mount) = ssd_mount_from_mapping(mapping) {
-                        return Ok((mount, name_filter));
-                    }
-                }
+            if config.sync.is_empty() {
+                anyhow::bail!("No sync mappings configured. Use `ssd-syncer add` to add one.");
             }
-            // If only one mapping exists and it has an absolute ssd path, auto-select it
-            if name_filter.is_none() && config.sync.len() == 1 {
-                if let Some(mount) = ssd_mount_from_mapping(&config.sync[0]) {
-                    let auto_name = config.sync[0].name.clone();
-                    return Ok((mount, auto_name));
-                }
+            if config.sync.len() == 1 {
+                let mapping = &config.sync[0];
+                Ok((mapping.ssd.clone(), vec![mapping]))
+            } else {
+                anyhow::bail!(
+                    "Multiple mappings configured. Please specify a mapping name.\nUse `ssd-syncer list` to see configured mappings."
+                );
             }
-            let ssd_mount = resolve_ssd_mount(None, config)?;
-            Ok((ssd_mount, name_filter))
         }
     }
 }
 
-fn cmd_set_ssd(ssd_mount: &str) -> Result<()> {
-    let ssd_path = Path::new(ssd_mount);
-    if !ssd_path.exists() {
-        anyhow::bail!("SSD mount point does not exist: {}", ssd_mount);
-    }
-    let mut config = AppConfig::load()?;
-    config.machine.ssd_mount = Some(ssd_mount.to_string());
-    config.save()?;
-    println!("Default SSD mount point set to: {}", ssd_mount);
-    Ok(())
-}
-
-fn cmd_sync(ssd_mount: Option<&str>, name: Option<&str>, dry_run: bool, verbose: bool) -> Result<()> {
+fn cmd_sync(name: Option<&str>, dry_run: bool, verbose: bool) -> Result<()> {
     let start_time = Instant::now();
     let config = AppConfig::load()?;
-    let (ssd_mount_str, resolved_name) = resolve_target(ssd_mount, name, &config)?;
+    let (ssd_mount_str, mappings) = resolve_mappings(name, &config)?;
     let ssd_path = Path::new(&ssd_mount_str);
 
     if !ssd_path.exists() {
         anyhow::bail!("SSD mount point does not exist: {}", ssd_mount_str);
-    }
-
-    let mappings = filter_mappings(&config.sync, resolved_name.as_deref());
-    if mappings.is_empty() {
-        if let Some(ref n) = resolved_name {
-            anyhow::bail!("No mapping found with name '{}'. Use `ssd-syncer list` to see configured mappings.", n);
-        }
-        println!("No sync mappings configured. Use `ssd-syncer add` to add one.");
-        return Ok(());
     }
 
     // Ensure .ssd-syncer directory on SSD
@@ -433,9 +334,9 @@ fn cmd_sync(ssd_mount: Option<&str>, name: Option<&str>, dry_run: bool, verbose:
     Ok(())
 }
 
-fn cmd_status(ssd_mount: Option<&str>, name: Option<&str>) -> Result<()> {
+fn cmd_status(name: Option<&str>) -> Result<()> {
     let config = AppConfig::load()?;
-    let (ssd_mount_str, resolved_name) = resolve_target(ssd_mount, name, &config)?;
+    let (ssd_mount_str, mappings) = resolve_mappings(name, &config)?;
     let ssd_path = Path::new(&ssd_mount_str);
 
     if !ssd_path.exists() {
@@ -443,14 +344,6 @@ fn cmd_status(ssd_mount: Option<&str>, name: Option<&str>) -> Result<()> {
     }
 
     let ignore = IgnoreMatcher::new(&config.ignore.patterns);
-    let mappings = filter_mappings(&config.sync, resolved_name.as_deref());
-    if mappings.is_empty() {
-        if let Some(ref n) = resolved_name {
-            anyhow::bail!("No mapping found with name '{}'.", n);
-        }
-        println!("No sync mappings configured.");
-        return Ok(());
-    }
 
     for mapping in &mappings {
         let label = mapping.name.as_deref().unwrap_or(&mapping.ssd);
@@ -531,9 +424,9 @@ fn cmd_status(ssd_mount: Option<&str>, name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_diff(ssd_mount: Option<&str>, name: Option<&str>) -> Result<()> {
+fn cmd_diff(name: Option<&str>) -> Result<()> {
     let config = AppConfig::load()?;
-    let (ssd_mount_str, resolved_name) = resolve_target(ssd_mount, name, &config)?;
+    let (ssd_mount_str, mappings) = resolve_mappings(name, &config)?;
     let ssd_path = Path::new(&ssd_mount_str);
 
     if !ssd_path.exists() {
@@ -541,14 +434,6 @@ fn cmd_diff(ssd_mount: Option<&str>, name: Option<&str>) -> Result<()> {
     }
 
     let ignore = IgnoreMatcher::new(&config.ignore.patterns);
-    let mappings = filter_mappings(&config.sync, resolved_name.as_deref());
-    if mappings.is_empty() {
-        if let Some(ref n) = resolved_name {
-            anyhow::bail!("No mapping found with name '{}'.", n);
-        }
-        println!("No sync mappings configured.");
-        return Ok(());
-    }
 
     for mapping in &mappings {
         let label = mapping.name.as_deref().unwrap_or(&mapping.ssd);
@@ -607,9 +492,9 @@ fn cmd_diff(ssd_mount: Option<&str>, name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_log(ssd_mount: Option<&str>, limit: usize) -> Result<()> {
+fn cmd_log(name: Option<&str>, limit: usize) -> Result<()> {
     let config = AppConfig::load()?;
-    let ssd_mount_str = resolve_ssd_mount(ssd_mount, &config)?;
+    let (ssd_mount_str, _mappings) = resolve_mappings(name, &config)?;
     let ssd_path = Path::new(&ssd_mount_str);
     let log_path = AppConfig::ssd_syncer_dir(ssd_path).join("sync.log");
 

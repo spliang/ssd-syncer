@@ -170,10 +170,6 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn find_mapping_by_ssd(&self, ssd_rel: &str) -> Option<&SyncMapping> {
-        self.sync.iter().find(|m| m.ssd == ssd_rel)
-    }
-
     pub fn find_mapping_by_name(&self, name: &str) -> Option<&SyncMapping> {
         self.sync.iter().find(|m| m.name.as_deref() == Some(name))
     }

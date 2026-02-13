@@ -100,27 +100,27 @@ ssd-syncer init --name "win-desktop"
 ssd-syncer init --name "ubuntu-dev"
 ```
 
-#### 2. Add folder mappings (with name and SSD path)
+#### 2. Add folder mapping
 
 ```bash
-# On Mac — use absolute SSD path + alias name
-ssd-syncer add --local /Users/summer/share/abc --ssd /Volumes/MySSD --name WORK
+# On Mac
+ssd-syncer add --local /Users/summer/share/abc --ssd /Volumes/MySSD/abc --name WORK
 
 # On Windows
-ssd-syncer add --local D:/share/abc --ssd E: --name WORK
+ssd-syncer add --local D:/share/abc --ssd E:/abc --name WORK
 
 # On Ubuntu
-ssd-syncer add --local /home/summer/share/abc --ssd /mnt/ssd --name WORK
+ssd-syncer add --local /home/summer/share/abc --ssd /mnt/ssd/abc --name WORK
 ```
 
 #### 3. Plug in SSD and sync
 
 ```bash
-# Quick sync by mapping name (recommended!)
+# By mapping name
 ssd-syncer sync WORK
 
-# Or specify SSD mount point directly (classic usage)
-ssd-syncer sync /Volumes/MySSD
+# If only one mapping exists, name can be omitted
+ssd-syncer sync
 ```
 
 #### 4. Preview before syncing
@@ -145,16 +145,15 @@ ssd-syncer init --name "macbook-pro"
 
 #### `add` — Add a sync folder mapping
 ```bash
-# With absolute SSD path + alias name (recommended)
-ssd-syncer add --local /Users/summer/Documents/work --ssd /Volumes/MySSD --name WORK
-
-# With relative path (classic, requires ssd_mount when syncing)
-ssd-syncer add --local /Users/summer/Documents/work --ssd WORK_SYNC
+ssd-syncer add --local /Users/summer/Documents/work --ssd /Volumes/MySSD/work --name WORK
 ```
+- `--local` — Local folder path
+- `--ssd` — SSD target absolute path
+- `--name` — Alias name for this mapping
 
 #### `remove` — Remove a sync folder mapping
 ```bash
-ssd-syncer remove --ssd WORK_SYNC
+ssd-syncer remove --name WORK
 ```
 
 #### `list` — List all configured mappings
@@ -162,46 +161,31 @@ ssd-syncer remove --ssd WORK_SYNC
 ssd-syncer list
 ```
 
-#### `set-ssd` — Set default SSD mount point
+#### `sync` — Sync folders with SSD
 ```bash
-ssd-syncer set-ssd /Volumes/MySSD    # macOS
-ssd-syncer set-ssd E:                # Windows
-ssd-syncer set-ssd /mnt/ssd          # Linux
-```
-
-#### `sync` — Sync all folders with SSD
-```bash
-# By mapping name (recommended — no need to remember paths!)
-ssd-syncer sync WORK
-
-# By SSD mount point path (classic)
-ssd-syncer sync /Volumes/MySSD
-
-# Preview only (no changes applied)
-ssd-syncer sync WORK --dry-run
-
-# Verbose: show each file operation on a separate line
-ssd-syncer sync WORK --verbose
-ssd-syncer sync WORK -v
+ssd-syncer sync WORK              # Sync by mapping name
+ssd-syncer sync                   # Auto-select if only one mapping
+ssd-syncer sync WORK --dry-run    # Preview only
+ssd-syncer sync WORK --verbose    # Verbose output
+ssd-syncer sync WORK -v           # Short form
 ```
 
 #### `status` — Show pending changes summary
 ```bash
-ssd-syncer status WORK                # By mapping name
-ssd-syncer status /Volumes/MySSD      # By path
+ssd-syncer status WORK
+ssd-syncer status                 # Auto-select if only one mapping
 ```
 
 #### `diff` — Show detailed file differences
 ```bash
-ssd-syncer diff WORK                  # By mapping name
-ssd-syncer diff /Volumes/MySSD        # By path
+ssd-syncer diff WORK
+ssd-syncer diff                   # Auto-select if only one mapping
 ```
 
 #### `log` — Show sync history
 ```bash
-ssd-syncer log WORK                       # By mapping name
-ssd-syncer log /Volumes/MySSD             # Last 20 entries (default)
-ssd-syncer log /Volumes/MySSD --limit 50  # Last 50 entries
+ssd-syncer log WORK
+ssd-syncer log WORK --limit 50   # Show last 50 entries
 ```
 
 #### `ignore-reset` — Reset ignore patterns to defaults
@@ -262,12 +246,12 @@ name = "macbook-pro"
 [[sync]]
 name = "WORK"
 local = "/Users/summer/share/abc"
-ssd = "/Volumes/MySSD"          # absolute path: use `sync WORK` directly!
+ssd = "/Volumes/MySSD/abc"
 
 [[sync]]
 name = "PHOTOS"
 local = "/Users/summer/share/xyz"
-ssd = "/Volumes/MySSD"          # same SSD, different local folder
+ssd = "/Volumes/MySSD/xyz"
 
 [ignore]
 patterns = [
@@ -413,27 +397,27 @@ ssd-syncer init --name "win-desktop"
 ssd-syncer init --name "ubuntu-dev"
 ```
 
-#### 2. 添加同步目录映射（指定 SSD 路径 + 别名）
+#### 2. 添加同步目录映射
 
 ```bash
-# Mac 上 — 使用 SSD 绝对路径 + 别名
-ssd-syncer add --local /Users/summer/share/abc --ssd /Volumes/MySSD --name WORK
+# Mac 上
+ssd-syncer add --local /Users/summer/share/abc --ssd /Volumes/MySSD/abc --name WORK
 
 # Windows 上
-ssd-syncer add --local D:/share/abc --ssd E: --name WORK
+ssd-syncer add --local D:/share/abc --ssd E:/abc --name WORK
 
 # Ubuntu 上
-ssd-syncer add --local /home/summer/share/abc --ssd /mnt/ssd --name WORK
+ssd-syncer add --local /home/summer/share/abc --ssd /mnt/ssd/abc --name WORK
 ```
 
 #### 3. 插入 SSD 执行同步
 
 ```bash
-# 通过别名快速同步（推荐！不用记路径）
+# 通过别名同步
 ssd-syncer sync WORK
 
-# 或直接指定 SSD 挂载点路径（传统用法）
-ssd-syncer sync /Volumes/MySSD
+# 只有一个映射时，可省略名称
+ssd-syncer sync
 ```
 
 #### 4. 同步前预览
@@ -458,16 +442,15 @@ ssd-syncer init --name "macbook-pro"
 
 #### `add` — 添加同步目录映射
 ```bash
-# 使用 SSD 绝对路径 + 别名（推荐）
-ssd-syncer add --local /Users/summer/Documents/work --ssd /Volumes/MySSD --name WORK
-
-# 使用相对路径（传统方式，同步时需手动指定挂载点）
-ssd-syncer add --local /Users/summer/Documents/work --ssd WORK_SYNC
+ssd-syncer add --local /Users/summer/Documents/work --ssd /Volumes/MySSD/work --name WORK
 ```
+- `--local` — 本地目录路径
+- `--ssd` — SSD 目标绝对路径
+- `--name` — 映射别名
 
 #### `remove` — 移除同步目录映射
 ```bash
-ssd-syncer remove --ssd WORK_SYNC
+ssd-syncer remove --name WORK
 ```
 
 #### `list` — 列出所有已配置的映射
@@ -475,46 +458,31 @@ ssd-syncer remove --ssd WORK_SYNC
 ssd-syncer list
 ```
 
-#### `set-ssd` — 设置默认 SSD 挂载点
-```bash
-ssd-syncer set-ssd /Volumes/MySSD    # macOS
-ssd-syncer set-ssd E:                # Windows
-ssd-syncer set-ssd /mnt/ssd          # Linux
-```
-
 #### `sync` — 执行同步
 ```bash
-# 通过别名同步（推荐！不用记路径）
-ssd-syncer sync WORK
-
-# 通过 SSD 挂载点路径同步（传统用法）
-ssd-syncer sync /Volumes/MySSD
-
-# 仅预览（不实际执行）
-ssd-syncer sync WORK --dry-run
-
-# 详细模式：逐文件显示操作
-ssd-syncer sync WORK --verbose
-ssd-syncer sync WORK -v
+ssd-syncer sync WORK              # 通过别名同步
+ssd-syncer sync                   # 只有一个映射时自动选择
+ssd-syncer sync WORK --dry-run    # 仅预览
+ssd-syncer sync WORK --verbose    # 详细模式
+ssd-syncer sync WORK -v           # 简写
 ```
 
 #### `status` — 查看待同步变更摘要
 ```bash
-ssd-syncer status WORK                # 通过别名
-ssd-syncer status /Volumes/MySSD      # 通过路径
+ssd-syncer status WORK
+ssd-syncer status                 # 只有一个映射时自动选择
 ```
 
 #### `diff` — 查看详细文件差异
 ```bash
-ssd-syncer diff WORK                  # 通过别名
-ssd-syncer diff /Volumes/MySSD        # 通过路径
+ssd-syncer diff WORK
+ssd-syncer diff                   # 只有一个映射时自动选择
 ```
 
 #### `log` — 查看同步历史
 ```bash
-ssd-syncer log WORK                       # 通过别名
-ssd-syncer log /Volumes/MySSD             # 默认显示最近 20 条
-ssd-syncer log /Volumes/MySSD --limit 50  # 显示最近 50 条
+ssd-syncer log WORK
+ssd-syncer log WORK --limit 50   # 显示最近 50 条
 ```
 
 #### `ignore-reset` — 重置忽略规则为默认值
@@ -575,12 +543,12 @@ name = "macbook-pro"
 [[sync]]
 name = "WORK"
 local = "/Users/summer/share/abc"
-ssd = "/Volumes/MySSD"          # 绝对路径：可直接 `sync WORK`！
+ssd = "/Volumes/MySSD/abc"
 
 [[sync]]
 name = "PHOTOS"
 local = "/Users/summer/share/xyz"
-ssd = "/Volumes/MySSD"          # 同一个 SSD，不同的本地目录
+ssd = "/Volumes/MySSD/xyz"
 
 [ignore]
 patterns = [
