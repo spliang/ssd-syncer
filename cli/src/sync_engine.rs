@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::Path;
 
 use crate::config::{AppConfig, ConflictStrategy};
@@ -11,6 +12,7 @@ pub struct SyncEngine {
     pub machine_name: String,
     pub conflict_strategy: ConflictStrategy,
     pub dry_run: bool,
+    pub verbose: bool,
 }
 
 pub struct SyncResult {
@@ -20,6 +22,7 @@ pub struct SyncResult {
     pub deleted_from_local: usize,
     pub conflicts: usize,
     pub errors: Vec<String>,
+    pub total_files: usize,
 }
 
 impl SyncResult {
@@ -31,6 +34,7 @@ impl SyncResult {
             deleted_from_local: 0,
             conflicts: 0,
             errors: vec![],
+            total_files: 0,
         }
     }
 
@@ -44,11 +48,12 @@ impl SyncResult {
 }
 
 impl SyncEngine {
-    pub fn new(machine_name: &str, conflict_strategy: ConflictStrategy, dry_run: bool) -> Self {
+    pub fn new(machine_name: &str, conflict_strategy: ConflictStrategy, dry_run: bool, verbose: bool) -> Self {
         Self {
             machine_name: machine_name.to_string(),
             conflict_strategy,
             dry_run,
+            verbose,
         }
     }
 
@@ -59,8 +64,25 @@ impl SyncEngine {
         ssd_root: &Path,
     ) -> Result<SyncResult> {
         let mut result = SyncResult::new();
+        let total = plan.actions.len();
 
-        for entry in &plan.actions {
+        for (idx, entry) in plan.actions.iter().enumerate() {
+            let progress = format!("[{}/{}]", idx + 1, total);
+            let action_desc = match &entry.action {
+                SyncAction::CopyToSsd => "→ SSD",
+                SyncAction::CopyToLocal => "← Local",
+                SyncAction::DeleteFromSsd => "✕ SSD",
+                SyncAction::DeleteFromLocal => "✕ Local",
+                SyncAction::Conflict(_) => "⚠ Conflict",
+            };
+            if self.verbose {
+                println!("  {} {} {}", progress, action_desc, entry.path);
+            } else {
+                print!("\r  {} {} {}", progress, action_desc, entry.path);
+                // 用空格覆盖可能的残留字符
+                print!("{}", " ".repeat(10));
+                let _ = std::io::stdout().flush();
+            }
             match &entry.action {
                 SyncAction::CopyToSsd => {
                     if entry.is_dir {
@@ -142,6 +164,33 @@ impl SyncEngine {
             }
         }
 
+        // compact 模式下清除进度行
+        if !self.verbose && total > 0 {
+            print!("\r{}", " ".repeat(80));
+            print!("\r");
+            let _ = std::io::stdout().flush();
+        }
+
+        // 通知 Windows 资源管理器刷新所有受影响的目录
+        if !self.dry_run && result.total_actions() > 0 {
+            let mut affected_dirs: std::collections::BTreeSet<std::path::PathBuf> = std::collections::BTreeSet::new();
+            // 根目录始终需要通知
+            affected_dirs.insert(local_root.to_path_buf());
+            affected_dirs.insert(ssd_root.to_path_buf());
+            // 收集所有受影响文件的父目录
+            for entry in &plan.actions {
+                if let Some(parent) = Path::new(&entry.path).parent() {
+                    if !parent.as_os_str().is_empty() {
+                        affected_dirs.insert(local_root.join(parent));
+                        affected_dirs.insert(ssd_root.join(parent));
+                    }
+                }
+            }
+            for dir in &affected_dirs {
+                notify_shell_update(dir);
+            }
+        }
+
         Ok(result)
     }
 
@@ -153,7 +202,7 @@ impl SyncEngine {
 
         std::fs::create_dir_all(path)
             .with_context(|| format!("Failed to create dir: {}", path.display()))?;
-        log::info!("Created dir {}", path.display());
+        log::debug!("Created dir {}", path.display());
         Ok(())
     }
 
@@ -166,7 +215,7 @@ impl SyncEngine {
         if path.exists() && path.is_dir() {
             std::fs::remove_dir(path)
                 .with_context(|| format!("Failed to delete dir: {}", path.display()))?;
-            log::info!("Deleted dir {}", path.display());
+            log::debug!("Deleted dir {}", path.display());
             self.cleanup_empty_parents(path)?;
         }
 
@@ -188,7 +237,7 @@ impl SyncEngine {
             format!("Failed to copy {} -> {}", src.display(), dst.display())
         })?;
 
-        log::info!("Copied {} -> {}", src.display(), dst.display());
+        log::debug!("Copied {} -> {}", src.display(), dst.display());
         Ok(())
     }
 
@@ -201,7 +250,7 @@ impl SyncEngine {
         if path.exists() {
             std::fs::remove_file(path)
                 .with_context(|| format!("Failed to delete: {}", path.display()))?;
-            log::info!("Deleted {}", path.display());
+            log::debug!("Deleted {}", path.display());
 
             // Clean up empty parent directories
             self.cleanup_empty_parents(path)?;
@@ -380,7 +429,32 @@ impl SyncEngine {
     }
 }
 
-/// Run a full sync for one mapping.
+/// 通知操作系统文件管理器刷新目录显示
+#[cfg(target_os = "windows")]
+fn notify_shell_update(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHChangeNotify(wEventId: i32, uFlags: u32, dwItem1: *const u16, dwItem2: *const u16);
+    }
+
+    const SHCNE_UPDATEDIR: i32 = 0x00001000;
+    const SHCNF_PATHW: u32 = 0x0005;
+    const SHCNF_FLUSHNOWAIT: u32 = 0x3000;
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    unsafe {
+        SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, wide.as_ptr(), std::ptr::null());
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn notify_shell_update(_path: &Path) {
+    // macOS/Linux 文件管理器通常会自动刷新
+}
+
+/// Run a full sync for one mapping (从磁盘加载快照).
 pub fn sync_one_mapping(
     local_root: &Path,
     ssd_data_root: &Path,
@@ -389,7 +463,29 @@ pub fn sync_one_mapping(
     ignore: &IgnoreMatcher,
     conflict_strategy: &ConflictStrategy,
     dry_run: bool,
+    verbose: bool,
 ) -> Result<(SyncPlan, SyncResult)> {
+    let (plan, result, _, _) = sync_one_mapping_cached(
+        local_root, ssd_data_root, ssd_rel, machine_name,
+        ignore, conflict_strategy, dry_run, verbose, None,
+    )?;
+    Ok((plan, result))
+}
+
+/// 同步一个映射（支持内存缓存快照）。
+/// 接受 `cached_snapshots`: Option<(base_snapshot, ssd_cache)>，如果有则跳过磁盘加载。
+/// 返回 (plan, result, 更新后的base_snapshot, 更新后的ssd_cache)。
+fn sync_one_mapping_cached(
+    local_root: &Path,
+    ssd_data_root: &Path,
+    ssd_rel: &str,
+    machine_name: &str,
+    ignore: &IgnoreMatcher,
+    conflict_strategy: &ConflictStrategy,
+    dry_run: bool,
+    verbose: bool,
+    cached_snapshots: Option<(Snapshot, Snapshot)>,
+) -> Result<(SyncPlan, SyncResult, Snapshot, Snapshot)> {
     let ssd_folder = ssd_data_root.join(ssd_rel);
 
     // Ensure SSD folder exists
@@ -397,15 +493,31 @@ pub fn sync_one_mapping(
         std::fs::create_dir_all(&ssd_folder)?;
     }
 
-    // Load base snapshot (last sync state for this machine)
+    // 快照文件路径（用于持久化保存）
     let snapshot_dir =
         AppConfig::ssd_snapshots_dir(ssd_data_root, machine_name);
     let snapshot_file = snapshot_dir.join(Snapshot::snapshot_filename(ssd_rel));
-    let base_snapshot = Snapshot::load_or_empty(&snapshot_file, ssd_rel, machine_name)?;
+    let ssd_cache_filename = format!("{}_ssd_cache.json",
+        ssd_rel.replace('/', "_").replace('\\', "_").replace(':', "_"));
+    let ssd_cache_file = snapshot_dir.join(&ssd_cache_filename);
 
-    // Scan both directories
+    // 使用内存缓存的快照（如果有），否则从磁盘加载
+    let (base_snapshot, ssd_cache) = match cached_snapshots {
+        Some((base, cache)) => {
+            log::debug!("Using in-memory cached snapshots");
+            (base, cache)
+        }
+        None => {
+            let base = Snapshot::load_or_empty(&snapshot_file, ssd_rel, machine_name)?;
+            let cache = Snapshot::load_or_empty(&ssd_cache_file, ssd_rel, machine_name)?;
+            (base, cache)
+        }
+    };
+
+    // Scan both directories (并行扫描，各自使用独立的缓存快照)
     let (local_snap, ssd_snap) =
-        scanner::scan_pair(local_root, &ssd_folder, ssd_rel, machine_name, ignore, Some(&base_snapshot))?;
+        scanner::scan_pair(local_root, &ssd_folder, ssd_rel, machine_name, ignore,
+            Some(&base_snapshot), Some(&ssd_cache))?;
 
     // Compute changes
     let local_changes = crate::diff::compute_changes(&base_snapshot, &local_snap);
@@ -422,21 +534,47 @@ pub fn sync_one_mapping(
 
     if plan.actions.is_empty() {
         log::info!("No changes to sync for '{}'", ssd_rel);
-        return Ok((plan, SyncResult::new()));
+        // 即使无需同步，也更新缓存快照以加速后续扫描
+        let mut updated_base = local_snap;
+        let mut updated_ssd = ssd_snap;
+        if !dry_run {
+            updated_base.synced_at = chrono::Utc::now();
+            updated_base.save(&snapshot_file)?;
+            updated_ssd.synced_at = chrono::Utc::now();
+            updated_ssd.save(&ssd_cache_file)?;
+        }
+        return Ok((plan, SyncResult::new(), updated_base, updated_ssd));
     }
 
     // Execute
-    let engine = SyncEngine::new(machine_name, conflict_strategy.clone(), dry_run);
-    let result = engine.execute_plan(&plan, local_root, &ssd_folder)?;
+    let engine = SyncEngine::new(machine_name, conflict_strategy.clone(), dry_run, verbose);
+    let mut result = engine.execute_plan(&plan, local_root, &ssd_folder)?;
 
-    // Update snapshot (re-scan after sync to capture actual state)
-    if !dry_run {
-        let final_local = scanner::scan_directory(local_root, ssd_rel, machine_name, ignore, None)?;
-        let mut final_snapshot = final_local;
-        final_snapshot.synced_at = chrono::Utc::now();
-        final_snapshot.save(&snapshot_file)?;
-        log::info!("Snapshot updated: {}", snapshot_file.display());
-    }
+    // Update snapshots
+    // 关键：基准快照 = 本地与SSD的交集（防止同步期间新增的本地文件被误判为"SSD删除"）
+    let (updated_base, updated_ssd) = if !dry_run {
+        let (final_local, final_ssd) = scanner::scan_pair(
+            local_root, &ssd_folder, ssd_rel, machine_name, ignore,
+            Some(&local_snap), Some(&ssd_snap))?;
+        result.total_files = final_local.files.len();
 
-    Ok((plan, result))
+        // 基准快照 = 本地文件中同时存在于SSD的部分（保留本地mtime用于扫描缓存）
+        let mut new_base = final_local;
+        new_base.files.retain(|path, _| final_ssd.files.contains_key(path));
+        new_base.synced_at = chrono::Utc::now();
+        new_base.save(&snapshot_file)?;
+
+        // SSD 侧缓存快照
+        let mut new_ssd_cache = final_ssd;
+        new_ssd_cache.synced_at = chrono::Utc::now();
+        new_ssd_cache.save(&ssd_cache_file)?;
+
+        log::debug!("Snapshots updated: {}", snapshot_file.display());
+        (new_base, new_ssd_cache)
+    } else {
+        result.total_files = local_snap.files.len();
+        (local_snap, ssd_snap)
+    };
+
+    Ok((plan, result, updated_base, updated_ssd))
 }

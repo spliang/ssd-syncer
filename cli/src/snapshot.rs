@@ -31,7 +31,7 @@ impl Snapshot {
     }
 
     pub fn snapshot_filename(ssd_rel: &str) -> String {
-        let safe_name = ssd_rel.replace('/', "_").replace('\\', "_");
+        let safe_name = ssd_rel.replace('/', "_").replace('\\', "_").replace(':', "_");
         format!("{}.json", safe_name)
     }
 

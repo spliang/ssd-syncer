@@ -44,6 +44,7 @@ pub struct SyncPlanEntry {
     pub is_dir: bool,
 }
 
+#[allow(dead_code)]
 impl SyncPlan {
     pub fn has_conflicts(&self) -> bool {
         self.actions

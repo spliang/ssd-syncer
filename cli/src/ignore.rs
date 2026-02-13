@@ -12,13 +12,28 @@ impl IgnoreMatcher {
     }
 
     pub fn is_ignored(&self, rel_path: &str) -> bool {
-        let path = Path::new(rel_path);
+        // 统一使用正斜杠
+        let normalized = rel_path.replace('\\', "/");
+        let path = Path::new(&normalized);
 
-        for component in path.components() {
-            let name = component.as_os_str().to_string_lossy();
-            for pattern in &self.patterns {
-                if Self::matches_pattern(&name, pattern) {
+        for pattern in &self.patterns {
+            if pattern.contains('/') {
+                // 路径模式：匹配完整相对路径或其前缀
+                // 例如 "projects/temp" 匹配 "projects/temp" 及 "projects/temp/foo.txt"
+                if Self::matches_pattern(&normalized, pattern) {
                     return true;
+                }
+                // 也检查路径是否以 pattern/ 开头
+                if normalized.starts_with(&format!("{}/", pattern)) {
+                    return true;
+                }
+            } else {
+                // 名称模式：匹配路径中任意一个组件
+                for component in path.components() {
+                    let name = component.as_os_str().to_string_lossy();
+                    if Self::matches_pattern(&name, pattern) {
+                        return true;
+                    }
                 }
             }
         }
@@ -89,5 +104,29 @@ mod tests {
         let m = IgnoreMatcher::new(&[".ssd-syncer".to_string()]);
         assert!(m.is_ignored(".ssd-syncer/snapshots/mac/foo.json"));
         assert!(!m.is_ignored("my-project/main.rs"));
+    }
+
+    #[test]
+    fn test_path_pattern() {
+        // 路径模式：只忽略特定路径下的目录
+        let m = IgnoreMatcher::new(&["projects/temp".to_string()]);
+        assert!(m.is_ignored("projects/temp"));
+        assert!(m.is_ignored("projects/temp/foo.txt"));
+        assert!(!m.is_ignored("other/temp"));
+        assert!(!m.is_ignored("temp"));
+    }
+
+    #[test]
+    fn test_name_vs_path_pattern() {
+        // 名称模式 "target" 忽略所有叫 target 的
+        let m1 = IgnoreMatcher::new(&["target".to_string()]);
+        assert!(m1.is_ignored("project-a/target"));
+        assert!(m1.is_ignored("project-b/target/debug/main"));
+
+        // 路径模式 "project-a/target" 只忽略特定路径
+        let m2 = IgnoreMatcher::new(&["project-a/target".to_string()]);
+        assert!(m2.is_ignored("project-a/target"));
+        assert!(m2.is_ignored("project-a/target/debug/main"));
+        assert!(!m2.is_ignored("project-b/target"));
     }
 }

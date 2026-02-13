@@ -16,10 +16,14 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MachineConfig {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssd_mount: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncMapping {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub local: String,
     pub ssd: String,
 }
@@ -40,10 +44,52 @@ impl Default for IgnoreConfig {
 
 fn default_ignore_patterns() -> Vec<String> {
     vec![
+        // 系统文件
         ".DS_Store".to_string(),
         "Thumbs.db".to_string(),
         "desktop.ini".to_string(),
         ".ssd-syncer".to_string(),
+        // 版本控制
+        ".git".to_string(),
+        ".svn".to_string(),
+        ".hg".to_string(),
+        // Python
+        "__pycache__".to_string(),
+        ".venv".to_string(),
+        "venv".to_string(),
+        ".eggs".to_string(),
+        "*.egg-info".to_string(),
+        ".tox".to_string(),
+        ".mypy_cache".to_string(),
+        ".pytest_cache".to_string(),
+        ".ruff_cache".to_string(),
+        // JavaScript / Node.js
+        "node_modules".to_string(),
+        ".next".to_string(),
+        ".nuxt".to_string(),
+        "bower_components".to_string(),
+        // Rust
+        "target".to_string(),
+        // Java / Kotlin / Gradle
+        ".gradle".to_string(),
+        // .NET / C#
+        "bin".to_string(),
+        "obj".to_string(),
+        // Go
+        "vendor".to_string(),
+        // IDE / 编辑器
+        ".idea".to_string(),
+        ".vs".to_string(),
+        "*.swp".to_string(),
+        "*.swo".to_string(),
+        // 构建产物
+        "dist".to_string(),
+        "build".to_string(),
+        ".cache".to_string(),
+        // 其他
+        "__MACOSX".to_string(),
+        ".tmp".to_string(),
+        "*.pyc".to_string(),
     ]
 }
 
@@ -114,6 +160,7 @@ impl AppConfig {
         let config = AppConfig {
             machine: MachineConfig {
                 name: machine_name.to_string(),
+                ssd_mount: None,
             },
             sync: vec![],
             ignore: IgnoreConfig::default(),
@@ -125,6 +172,10 @@ impl AppConfig {
 
     pub fn find_mapping_by_ssd(&self, ssd_rel: &str) -> Option<&SyncMapping> {
         self.sync.iter().find(|m| m.ssd == ssd_rel)
+    }
+
+    pub fn find_mapping_by_name(&self, name: &str) -> Option<&SyncMapping> {
+        self.sync.iter().find(|m| m.name.as_deref() == Some(name))
     }
 
     pub fn ssd_syncer_dir(ssd_mount: &Path) -> PathBuf {

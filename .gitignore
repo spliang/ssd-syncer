@@ -1,8 +1,10 @@
 # Rust build artifacts
 rust-cli/target/
+cli/target/
 
 # OS files
 .DS_Store
+._*
 Thumbs.db
 desktop.ini
 

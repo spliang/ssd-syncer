@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -28,7 +29,19 @@ pub fn scan_directory(
     // Track which directories contain files (directly or indirectly)
     let mut non_empty_dirs: BTreeSet<String> = BTreeSet::new();
 
-    for entry in WalkDir::new(root).follow_links(false) {
+    let mut file_count: usize = 0;
+
+    let walker = WalkDir::new(root).follow_links(false).into_iter();
+    // 使用 filter_entry 跳过忽略目录的整个子树
+    for entry in walker.filter_entry(|e| {
+        let rel = e.path().strip_prefix(root).unwrap_or(e.path());
+        let rel_str = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("/");
+        rel_str.is_empty() || !ignore.is_ignored(&rel_str)
+    }) {
         let entry = entry.with_context(|| format!("Failed to walk directory: {}", root.display()))?;
 
         let abs_path = entry.path();
@@ -45,10 +58,6 @@ pub fn scan_directory(
 
         if rel_str.is_empty() {
             continue; // Skip root itself
-        }
-
-        if ignore.is_ignored(&rel_str) {
-            continue;
         }
 
         if entry.file_type().is_dir() {
@@ -117,6 +126,19 @@ pub fn scan_directory(
                 is_dir: false,
             },
         );
+
+        file_count += 1;
+        if file_count % 100 == 0 {
+            print!("\r  Scanning... {} files", file_count);
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    // 清除进度行
+    if file_count >= 100 {
+        print!("\r{}", " ".repeat(40));
+        print!("\r");
+        let _ = std::io::stdout().flush();
     }
 
     // Add empty directories to the snapshot
@@ -150,19 +172,31 @@ pub fn scan_pair(
     sync_folder: &str,
     machine: &str,
     ignore: &IgnoreMatcher,
-    base_snapshot: Option<&Snapshot>,
+    local_cache: Option<&Snapshot>,
+    ssd_cache: Option<&Snapshot>,
 ) -> Result<(Snapshot, Snapshot)> {
-    log::info!("Scanning local: {}", local_root.display());
-    let local_snap = scan_directory(local_root, sync_folder, machine, ignore, base_snapshot)?;
-    log::info!(
-        "Local scan complete: {} files",
-        local_snap.files.len()
-    );
+    log::info!("Scanning local + SSD in parallel...");
 
-    log::info!("Scanning SSD: {}", ssd_root.display());
-    let ssd_snap = scan_directory(ssd_root, sync_folder, machine, ignore, base_snapshot)?;
+    // 并行扫描本地和 SSD 目录，大幅减少总扫描时间
+    let (local_result, ssd_result) = std::thread::scope(|s| {
+        let local_handle = s.spawn(|| {
+            scan_directory(local_root, sync_folder, machine, ignore, local_cache)
+        });
+        let ssd_handle = s.spawn(|| {
+            scan_directory(ssd_root, sync_folder, machine, ignore, ssd_cache)
+        });
+
+        let local_res = local_handle.join().expect("local scan thread panicked");
+        let ssd_res = ssd_handle.join().expect("SSD scan thread panicked");
+        (local_res, ssd_res)
+    });
+
+    let local_snap = local_result?;
+    let ssd_snap = ssd_result?;
+
     log::info!(
-        "SSD scan complete: {} files",
+        "Scan complete: {} local files, {} SSD files",
+        local_snap.files.len(),
         ssd_snap.files.len()
     );
 
