@@ -19,7 +19,7 @@ use snapshot::Snapshot;
 #[command(name = "ssd-syncer", version, about = "Sync folders via SSD across machines")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -115,18 +115,19 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { name } => cmd_init(&name),
-        Commands::Add { local, ssd, name } => cmd_add(&local, &ssd, &name),
-        Commands::Remove { name } => cmd_remove(&name),
-        Commands::List => cmd_list(),
-        Commands::Sync { name, dry_run, verbose } => cmd_sync(name.as_deref(), dry_run, verbose),
-        Commands::Status { name } => cmd_status(name.as_deref()),
-        Commands::Diff { name } => cmd_diff(name.as_deref()),
-        Commands::Log { name, limit } => cmd_log(name.as_deref(), limit),
-        Commands::IgnoreReset => cmd_ignore_reset(),
-        Commands::IgnoreList => cmd_ignore_list(),
-        Commands::IgnoreAdd { patterns } => cmd_ignore_add(&patterns),
-        Commands::IgnoreRemove { patterns } => cmd_ignore_remove(&patterns),
+        None => cmd_sync(None, false, false),
+        Some(Commands::Init { name }) => cmd_init(&name),
+        Some(Commands::Add { local, ssd, name }) => cmd_add(&local, &ssd, &name),
+        Some(Commands::Remove { name }) => cmd_remove(&name),
+        Some(Commands::List) => cmd_list(),
+        Some(Commands::Sync { name, dry_run, verbose }) => cmd_sync(name.as_deref(), dry_run, verbose),
+        Some(Commands::Status { name }) => cmd_status(name.as_deref()),
+        Some(Commands::Diff { name }) => cmd_diff(name.as_deref()),
+        Some(Commands::Log { name, limit }) => cmd_log(name.as_deref(), limit),
+        Some(Commands::IgnoreReset) => cmd_ignore_reset(),
+        Some(Commands::IgnoreList) => cmd_ignore_list(),
+        Some(Commands::IgnoreAdd { patterns }) => cmd_ignore_add(&patterns),
+        Some(Commands::IgnoreRemove { patterns }) => cmd_ignore_remove(&patterns),
     }
 }
 
