@@ -31,7 +31,7 @@ MacOS ↔ SSD ↔ Windows
 - **Bidirectional sync**: changes on either side are correctly merged
 - **Conflict detection**: 5 resolution strategies (`both` / `local-wins` / `ssd-wins` / `newer-wins` / `ask`)
 - **Fast scanning**: mtime+size pre-filtering, BLAKE3 hashing only when needed
-- **Smart ignore**: common build/temp directories (`node_modules`, `__pycache__`, `target`, `.git`, `dist`, `build`, etc.) ignored by default, supports glob patterns
+- **Smart ignore**: common build/temp directories (`node_modules`, `__pycache__`, `target`, `.git`, `dist`, `build`, etc.) and system files (`.DS_Store`, `._*`, `Thumbs.db`) ignored by default, supports glob patterns
 - **Dry run mode**: preview all changes before applying
 - **Sync history log**: track when and what was synced
 
@@ -255,7 +255,7 @@ ssd = "/Volumes/MySSD/xyz"
 
 [ignore]
 patterns = [
-  ".DS_Store", "Thumbs.db", "desktop.ini", ".ssd-syncer",
+  ".DS_Store", "._*", "Thumbs.db", "desktop.ini", ".ssd-syncer",
   ".git", ".svn", ".hg",
   "__pycache__", ".venv", "venv", "node_modules",
   "target", "dist", "build", ".cache",
@@ -328,7 +328,7 @@ MacOS ↔ SSD ↔ Windows
 - **双向同步**：两端的变更都能正确合并
 - **冲突检测**：5 种冲突解决策略（`both` / `local-wins` / `ssd-wins` / `newer-wins` / `ask`）
 - **快速扫描**：mtime + size 预过滤，仅必要时计算 BLAKE3 哈希
-- **智能忽略**：默认忽略常见编译/临时目录（`node_modules`、`__pycache__`、`target`、`.git`、`dist`、`build` 等），支持 glob 模式
+- **智能忽略**：默认忽略常见编译/临时目录（`node_modules`、`__pycache__`、`target`、`.git`、`dist`、`build` 等）和系统文件（`.DS_Store`、`._*`、`Thumbs.db`），支持 glob 模式
 - **Dry Run 模式**：预览所有变更，确认后再执行
 - **同步历史日志**：记录每次同步的时间和操作数
 
@@ -552,7 +552,7 @@ ssd = "/Volumes/MySSD/xyz"
 
 [ignore]
 patterns = [
-  ".DS_Store", "Thumbs.db", "desktop.ini", ".ssd-syncer",
+  ".DS_Store", "._*", "Thumbs.db", "desktop.ini", ".ssd-syncer",
   ".git", ".svn", ".hg",
   "__pycache__", ".venv", "venv", "node_modules",
   "target", "dist", "build", ".cache",
