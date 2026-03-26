@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 
@@ -23,6 +24,8 @@ pub struct SyncResult {
     pub conflicts: usize,
     pub errors: Vec<String>,
     pub total_files: usize,
+    /// 操作失败的相对路径集合，用于快照更新时保留旧基准条目
+    pub failed_paths: BTreeSet<String>,
 }
 
 impl SyncResult {
@@ -35,6 +38,7 @@ impl SyncResult {
             conflicts: 0,
             errors: vec![],
             total_files: 0,
+            failed_paths: BTreeSet::new(),
         }
     }
 
@@ -88,6 +92,7 @@ impl SyncEngine {
                     if entry.is_dir {
                         if let Err(e) = self.create_dir(&ssd_root.join(&entry.path)) {
                             result.errors.push(format!("CreateDirSsd {}: {}", entry.path, e));
+                            result.failed_paths.insert(entry.path.clone());
                         } else {
                             result.copied_to_ssd += 1;
                         }
@@ -98,6 +103,7 @@ impl SyncEngine {
                         result
                             .errors
                             .push(format!("CopyToSsd {}: {}", entry.path, e));
+                        result.failed_paths.insert(entry.path.clone());
                     } else {
                         result.copied_to_ssd += 1;
                     }
@@ -106,6 +112,7 @@ impl SyncEngine {
                     if entry.is_dir {
                         if let Err(e) = self.create_dir(&local_root.join(&entry.path)) {
                             result.errors.push(format!("CreateDirLocal {}: {}", entry.path, e));
+                            result.failed_paths.insert(entry.path.clone());
                         } else {
                             result.copied_to_local += 1;
                         }
@@ -116,36 +123,52 @@ impl SyncEngine {
                         result
                             .errors
                             .push(format!("CopyToLocal {}: {}", entry.path, e));
+                        result.failed_paths.insert(entry.path.clone());
                     } else {
                         result.copied_to_local += 1;
                     }
                 }
                 SyncAction::DeleteFromSsd => {
                     if entry.is_dir {
-                        if let Err(e) = self.delete_dir(&ssd_root.join(&entry.path)) {
-                            result.errors.push(format!("DeleteDirSsd {}: {}", entry.path, e));
-                        } else {
-                            result.deleted_from_ssd += 1;
+                        match self.delete_dir(&ssd_root.join(&entry.path)) {
+                            Err(e) => {
+                                result.errors.push(format!("DeleteDirSsd {}: {}", entry.path, e));
+                                result.failed_paths.insert(entry.path.clone());
+                            }
+                            Ok(actually_deleted) => {
+                                if actually_deleted {
+                                    result.deleted_from_ssd += 1;
+                                }
+                                // 未实际删除（非空目录含忽略文件）不算失败
+                            }
                         }
                     } else if let Err(e) = self.delete_file(&ssd_root.join(&entry.path)) {
                         result
                             .errors
                             .push(format!("DeleteFromSsd {}: {}", entry.path, e));
+                        result.failed_paths.insert(entry.path.clone());
                     } else {
                         result.deleted_from_ssd += 1;
                     }
                 }
                 SyncAction::DeleteFromLocal => {
                     if entry.is_dir {
-                        if let Err(e) = self.delete_dir(&local_root.join(&entry.path)) {
-                            result.errors.push(format!("DeleteDirLocal {}: {}", entry.path, e));
-                        } else {
-                            result.deleted_from_local += 1;
+                        match self.delete_dir(&local_root.join(&entry.path)) {
+                            Err(e) => {
+                                result.errors.push(format!("DeleteDirLocal {}: {}", entry.path, e));
+                                result.failed_paths.insert(entry.path.clone());
+                            }
+                            Ok(actually_deleted) => {
+                                if actually_deleted {
+                                    result.deleted_from_local += 1;
+                                }
+                            }
                         }
                     } else if let Err(e) = self.delete_file(&local_root.join(&entry.path)) {
                         result
                             .errors
                             .push(format!("DeleteFromLocal {}: {}", entry.path, e));
+                        result.failed_paths.insert(entry.path.clone());
                     } else {
                         result.deleted_from_local += 1;
                     }
@@ -157,6 +180,7 @@ impl SyncEngine {
                         result
                             .errors
                             .push(format!("Conflict {}: {}", entry.path, e));
+                        result.failed_paths.insert(entry.path.clone());
                     } else {
                         result.conflicts += 1;
                     }
@@ -206,20 +230,37 @@ impl SyncEngine {
         Ok(())
     }
 
-    fn delete_dir(&self, path: &Path) -> Result<()> {
+    /// 删除空目录。返回 Ok(true) 表示成功删除，Ok(false) 表示目录非空（可能含忽略文件）跳过。
+    fn delete_dir(&self, path: &Path) -> Result<bool> {
         if self.dry_run {
             log::info!("[DRY RUN] Delete dir {}", path.display());
-            return Ok(());
+            return Ok(true);
         }
 
         if path.exists() && path.is_dir() {
-            std::fs::remove_dir(path)
-                .with_context(|| format!("Failed to delete dir: {}", path.display()))?;
-            log::debug!("Deleted dir {}", path.display());
-            self.cleanup_empty_parents(path)?;
+            match std::fs::remove_dir(path) {
+                Ok(()) => {
+                    log::debug!("Deleted dir {}", path.display());
+                    self.cleanup_empty_parents(path)?;
+                    Ok(true)
+                }
+                Err(e) => {
+                    // 目录非空（可能含被忽略的文件如 ._* 等），不视为错误
+                    if e.kind() == std::io::ErrorKind::Other
+                        || e.to_string().contains("not empty")
+                        || e.to_string().contains("目录不是空的")
+                        || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    {
+                        log::debug!("Dir not empty (may contain ignored files), skipping: {}", path.display());
+                        Ok(false)
+                    } else {
+                        Err(e).with_context(|| format!("Failed to delete dir: {}", path.display()))
+                    }
+                }
+            }
+        } else {
+            Ok(false)
         }
-
-        Ok(())
     }
 
     fn copy_file(&self, src: &Path, dst: &Path) -> Result<()> {
@@ -552,6 +593,7 @@ fn sync_one_mapping_cached(
 
     // Update snapshots
     // 关键：基准快照 = 本地与SSD的交集（防止同步期间新增的本地文件被误判为"SSD删除"）
+    // 修复：对操作失败的路径，保留旧基准条目，防止下次同步反向拷贝（死循环）
     let (updated_base, updated_ssd) = if !dry_run {
         let (final_local, final_ssd) = scanner::scan_pair(
             local_root, &ssd_folder, ssd_rel, machine_name, ignore,
@@ -561,6 +603,26 @@ fn sync_one_mapping_cached(
         // 基准快照 = 本地文件中同时存在于SSD的部分（保留本地mtime用于扫描缓存）
         let mut new_base = final_local;
         new_base.files.retain(|path, _| final_ssd.files.contains_key(path));
+
+        // 关键修复：对失败的路径，将旧基准条目写回新基准快照
+        // 这样下次同步仍能正确检测到"本地删除"或"SSD删除"并重试
+        if !result.failed_paths.is_empty() {
+            log::warn!(
+                "{} paths had errors, preserving old base entries to prevent sync loop",
+                result.failed_paths.len()
+            );
+            for failed_path in &result.failed_paths {
+                if let Some(old_entry) = base_snapshot.files.get(failed_path) {
+                    new_base.files.insert(failed_path.clone(), old_entry.clone());
+                    log::debug!("Preserved old base entry for failed path: {}", failed_path);
+                } else {
+                    // 旧基准没有该条目（如 CopyToSsd/CopyToLocal 失败），确保新基准也不包含
+                    new_base.files.remove(failed_path);
+                    log::debug!("Removed new base entry for failed path: {}", failed_path);
+                }
+            }
+        }
+
         new_base.synced_at = chrono::Utc::now();
         new_base.save(&snapshot_file)?;
 
