@@ -117,6 +117,17 @@ mod tests {
     }
 
     #[test]
+    fn test_apple_double_files() {
+        // macOS AppleDouble 资源分叉文件 ._* 应被忽略
+        let m = IgnoreMatcher::new(&["._*".to_string()]);
+        assert!(m.is_ignored("._foo.txt"));
+        assert!(m.is_ignored("subdir/._bar.doc"));
+        assert!(m.is_ignored("a/b/._c"));
+        assert!(!m.is_ignored("readme.md"));
+        assert!(!m.is_ignored("normal_file"));
+    }
+
+    #[test]
     fn test_name_vs_path_pattern() {
         // 名称模式 "target" 忽略所有叫 target 的
         let m1 = IgnoreMatcher::new(&["target".to_string()]);

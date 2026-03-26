@@ -46,6 +46,7 @@ fn default_ignore_patterns() -> Vec<String> {
     vec![
         // 系统文件
         ".DS_Store".to_string(),
+        "._*".to_string(),
         "Thumbs.db".to_string(),
         "desktop.ini".to_string(),
         ".ssd-syncer".to_string(),
